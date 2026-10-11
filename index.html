@@ -474,10 +474,12 @@ async function makeModels(delegate) {
   const face = await withTimeout(FaceLandmarker.createFromOptions(fs, {
     baseOptions: { modelAssetBuffer: modelBufs.faceBuf, delegate }, runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
   }), 20000, `Model muka ${delegate}`);
-  setStatus(`Siapin model badan (${delegate})...`);
+  const poseDelegate = new URLSearchParams(location.search).has("posegpu") ? delegate : "CPU";
+  setStatus(`Siapin model badan (${poseDelegate})...`);
+  await new Promise(r => setTimeout(r, 50));
   const pose = await withTimeout(PoseLandmarker.createFromOptions(fs, {
-    baseOptions: { modelAssetBuffer: modelBufs.poseBuf, delegate }, runningMode: "VIDEO", numPoses: 1, outputSegmentationMasks: true,
-  }), 20000, `Model badan ${delegate}`);
+    baseOptions: { modelAssetBuffer: modelBufs.poseBuf, delegate: poseDelegate }, runningMode: "VIDEO", numPoses: 1, outputSegmentationMasks: true,
+  }), 30000, `Model badan ${poseDelegate}`);
   return { face, pose };
 }
 async function startVideo() {
