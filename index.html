@@ -443,14 +443,41 @@ function loop(now) {
 }
 
 /* ---------- setup ---------- */
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timeout ${ms / 1000}s`)), ms))]);
+const mb = n => (n / 1048576).toFixed(1);
+async function fetchModel(url, label) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
+  const total = +res.headers.get("content-length") || 0;
+  const reader = res.body.getReader(), parts = [];
+  let got = 0, lastT = Date.now();
+  for (;;) {
+    const { done, value } = await withTimeout(reader.read(), 20000, `Download ${label}`);
+    if (done) break;
+    parts.push(value); got += value.length;
+    if (Date.now() - lastT > 150) { lastT = Date.now(); setStatus(`Download ${label}: ${mb(got)}${total ? " / " + mb(total) : ""} MB`); }
+  }
+  const out = new Uint8Array(got); let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+let modelBufs = null;
 async function makeModels(delegate) {
-  const fs = await FilesetResolver.forVisionTasks(WASM);
-  const face = await FaceLandmarker.createFromOptions(fs, {
-    baseOptions: { modelAssetPath: M_FACE, delegate }, runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
-  });
-  const pose = await PoseLandmarker.createFromOptions(fs, {
-    baseOptions: { modelAssetPath: M_POSE, delegate }, runningMode: "VIDEO", numPoses: 1, outputSegmentationMasks: true,
-  });
+  if (!modelBufs) {
+    const faceBuf = await fetchModel(M_FACE, "model muka");
+    const poseBuf = await fetchModel(M_POSE, "model badan");
+    modelBufs = { faceBuf, poseBuf };
+  }
+  setStatus(`Nyalain engine AI (${delegate})...`);
+  const fs = await withTimeout(FilesetResolver.forVisionTasks(WASM), 30000, "Engine");
+  setStatus(`Siapin model muka (${delegate})...`);
+  const face = await withTimeout(FaceLandmarker.createFromOptions(fs, {
+    baseOptions: { modelAssetBuffer: modelBufs.faceBuf, delegate }, runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
+  }), 20000, `Model muka ${delegate}`);
+  setStatus(`Siapin model badan (${delegate})...`);
+  const pose = await withTimeout(PoseLandmarker.createFromOptions(fs, {
+    baseOptions: { modelAssetBuffer: modelBufs.poseBuf, delegate }, runningMode: "VIDEO", numPoses: 1, outputSegmentationMasks: true,
+  }), 20000, `Model badan ${delegate}`);
   return { face, pose };
 }
 async function startVideo() {
@@ -476,16 +503,24 @@ $("btnStart").addEventListener("click", async () => {
       S.aStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: false } });
       setupAudio(S.aStream);
     } catch { S.micOn = false; $("btnMic").textContent = "Mic off"; $("btnMic").setAttribute("aria-pressed", "false"); }
-    setStatus("Download model AI (sekitar 10 MB, sekali aja)...");
-    try { S.models = await makeModels("GPU"); }
-    catch (e) { console.warn("GPU gagal, pakai CPU", e); S.models = await makeModels("CPU"); }
+    const forceCpu = new URLSearchParams(location.search).has("cpu");
+    if (forceCpu) S.models = await makeModels("CPU");
+    else {
+      try { S.models = await makeModels("GPU"); }
+      catch (e) {
+        if (!modelBufs) throw e;
+        console.warn("GPU gagal, pakai CPU", e);
+        setStatus(`GPU gagal (${e.message}), coba CPU...`);
+        S.models = await makeModels("CPU");
+      }
+    }
     try { await navigator.wakeLock?.request("screen"); } catch {}
     resetCal();
     $("start").hidden = true;
     resize();
   } catch (e) {
     console.error(e);
-    setStatus(e.name === "NotAllowedError" ? "Izin kamera ditolak. Aktifin di setting browser terus coba lagi." : `Gagal mulai: ${e.message}`, true);
+    setStatus(e.name === "NotAllowedError" ? "Izin kamera ditolak. Aktifin di setting browser terus coba lagi." : `Gagal mulai: ${e.message}. Pencet lagi, atau buka link dengan ?cpu di belakangnya.`, true);
     btn.disabled = false;
   }
 });
