@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kamera Aura</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed viewfinder, translucent bottom sheet HUD, single dark camera-app look */
+:root{
+  --ink:#0A0A0F; --panel:rgba(12,12,18,.74); --line:rgba(255,255,255,.12);
+  --fg:#F3F2F7; --muted:#A9A7B8; --aura:rgb(200,205,220);
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--fg);font:15px/1.5 var(--body);overflow:hidden}
+#app{position:fixed;inset:0}
+video{display:none}
+#stage{position:absolute;inset:0;width:100%;height:100%;display:block}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--aura);outline-offset:2px}
+.top{position:absolute;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;display:flex;align-items:center;gap:10px;background:linear-gradient(rgba(10,10,15,.7),rgba(10,10,15,0))}
+.brand{font:700 18px/1 var(--display);letter-spacing:-.01em;margin-right:auto;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--aura);box-shadow:0 0 14px var(--aura)}
+.pill{border:1px solid var(--line);background:rgba(12,12,18,.55);border-radius:999px;padding:7px 12px;font:500 12px/1 var(--mono);letter-spacing:.02em}
+.pill[aria-pressed="false"]{color:var(--muted)}
+.hud{position:absolute;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);max-width:440px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;display:grid;gap:14px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.reading{display:flex;gap:14px;align-items:center}
+.reading>div{min-width:0;flex:1}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+#auraName{font:700 44px/1 var(--display);letter-spacing:-.02em;margin:6px 0 4px;color:var(--aura);text-wrap:balance}
+#auraDesc{margin:0;color:var(--muted);font-size:14px}
+#circ{width:104px;height:104px;flex:none}
+.meters{display:grid;gap:8px}
+.row{display:grid;grid-template-columns:52px 1fr 92px;gap:10px;align-items:center;font-size:13px}
+.row .lab{color:var(--muted)}
+.bar{position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.35)}
+.bar i{position:absolute;top:0;bottom:0;left:50%;width:0;background:var(--aura);border-radius:4px}
+.row .st{font:400 11px/1.2 var(--mono);color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.foot{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.foot small{color:var(--muted);font-size:12px;flex:1;min-width:180px}
+.start{position:absolute;inset:0;display:grid;place-items:center;padding:24px 16px;background:radial-gradient(120% 80% at 50% 30%,#1b1730 0%,var(--ink) 70%)}
+.card{max-width:420px;display:grid;gap:18px}
+.card h1{font:700 52px/.95 var(--display);letter-spacing:-.03em;margin:0}
+.card h1 span{background:linear-gradient(90deg,#FFC440,#40DCB4,#6E5AFF,#FF4650);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card ul{margin:0;padding-left:18px;display:grid;gap:6px;color:var(--muted)}
+.card ul b{color:var(--fg);font-weight:500}
+.go{border:0;border-radius:14px;padding:16px;font:700 18px/1 var(--display);background:var(--fg);color:var(--ink)}
+.go:disabled{opacity:.5}
+#status{font:400 12px/1.4 var(--mono);color:var(--muted);min-height:1.4em;margin:0}
+.err{color:#FF8A8A!important}
+@media (min-width:760px){.hud{right:auto}}
+@media (prefers-reduced-motion:reduce){.dot{box-shadow:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="vid" playsinline muted></video>
+  <canvas id="stage" aria-label="Viewfinder dengan aura"></canvas>
+
+  <header class="top">
+    <div class="brand"><span class="dot"></span>Kamera Aura</div>
+    <span class="pill" id="fps">-- fps</span>
+    <button class="pill" id="btnMic" aria-pressed="true">Mic on</button>
+    <button class="pill" id="btnFlip">Balik</button>
+    <button class="pill" id="btnDbg" aria-pressed="false">Titik</button>
+  </header>
+
+  <section class="hud" aria-live="polite">
+    <div class="reading">
+      <div>
+        <div class="eyebrow">Aura sekarang</div>
+        <div id="auraName">Netral</div>
+        <p id="auraDesc">Lagi kalibrasi, pasang muka biasa aja.</p>
+      </div>
+      <canvas id="circ" width="208" height="208" aria-label="Peta valence dan arousal"></canvas>
+    </div>
+    <div class="meters">
+      <div class="row"><span class="lab">Muka</span><div class="bar"><i id="bFace"></i></div><span class="st" id="sFace">nunggu</span></div>
+      <div class="row"><span class="lab">Badan</span><div class="bar"><i id="bBody"></i></div><span class="st" id="sBody">nunggu</span></div>
+      <div class="row"><span class="lab">Suara</span><div class="bar"><i id="bVoice"></i></div><span class="st" id="sVoice">nunggu</span></div>
+    </div>
+    <div class="foot">
+      <small>Bar = positif (kanan) vs negatif (kiri). Untuk hiburan, ini nebak ekspresi, bukan isi hati.</small>
+      <button class="pill" id="btnCal">Kalibrasi ulang</button>
+    </div>
+  </section>
+
+  <div class="start" id="start">
+    <div class="card">
+      <div class="eyebrow">Vibe meter live</div>
+      <h1>Kamera <span>Aura</span></h1>
+      <ul>
+        <li><b>Baca 3 sinyal:</b> mimik muka, gerak badan, nada suara.</li>
+        <li><b>5 detik pertama</b> pasang muka biasa aja, ini buat kalibrasi baseline lo.</li>
+        <li><b>Diproses di HP.</b> Video dan suara nggak diupload ke mana-mana, cuma model AI-nya yang didownload.</li>
+        <li><b>Scan orang lain?</b> Minta izin dulu.</li>
+      </ul>
+      <button class="go" id="btnStart">Mulai scan</button>
+      <p id="status">Butuh izin kamera + mic.</p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { FilesetResolver, FaceLandmarker, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs";
+
+const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm";
+const M_FACE = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const M_POSE = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+
+const $ = id => document.getElementById(id);
+const clamp = (x, a = -1, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const tanh = Math.tanh;
+const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+const ema = (prev, x, dt, tau) => prev + (x - prev) * (1 - Math.exp(-dt / tau));
+
+const video = $("vid"), stage = $("stage"), ctx = stage.getContext("2d");
+const maskCv = document.createElement("canvas"), maskCtx = maskCv.getContext("2d");
+const personCv = document.createElement("canvas"), personCtx = personCv.getContext("2d");
+
+const S = {
+  facing: "user", vStream: null, aStream: null, micOn: true, debug: false,
+  models: null, audio: null,
+  mod: { face: { v: 0, a: 0, c: 0 }, body: { v: 0, a: 0, c: 0 }, voice: { v: 0, a: 0, c: 0 } },
+  fused: { v: 0, a: 0 }, trail: [],
+  faceLm: null, poseLm: null, lastFaceT: 0, lastPoseT: 0, lastMaskT: 0, maskAlpha: 0,
+  prevNose: null, faceMotion: 0, prevPose: null, bodyMotion: 0,
+  frame: 0, fpsCount: 0, fpsT: 0,
+};
+
+/* ---------- calibration: per-modality baseline of raw features ---------- */
+const NEED = { face: 120, body: 60, voice: 60 };
+const cal = {};
+function resetCal() {
+  for (const k of ["face", "body", "voice"]) cal[k] = { n: 0, sum: {}, base: null };
+}
+resetCal();
+function feedCal(k, f) {
+  const c = cal[k];
+  if (c.base) return true;
+  for (const key in f) c.sum[key] = (c.sum[key] || 0) + f[key];
+  c.n++;
+  if (c.n >= NEED[k]) { c.base = {}; for (const key in c.sum) c.base[key] = c.sum[key] / c.n; }
+  return !!c.base;
+}
+
+/* ---------- face: blendshapes to valence/arousal ---------- */
+function handleFace(res, dt, t) {
+  const cats = res.faceBlendshapes?.[0]?.categories;
+  const lm = res.faceLandmarks?.[0];
+  if (!cats || !lm) { S.faceLm = null; return; }
+  S.faceLm = lm; S.lastFaceT = t;
+  const b = {}; for (const c of cats) b[c.categoryName] = c.score;
+  const avg = (x, y) => ((b[x] || 0) + (b[y] || 0)) / 2;
+  const nose = lm[1];
+  if (S.prevNose) S.faceMotion = ema(S.faceMotion, dist(nose, S.prevNose) / Math.max(dt, 1e-3), dt, 0.4);
+  S.prevNose = { x: nose.x, y: nose.y };
+  const f = {
+    smile: avg("mouthSmileLeft", "mouthSmileRight"),
+    cheek: avg("cheekSquintLeft", "cheekSquintRight"),
+    frown: avg("mouthFrownLeft", "mouthFrownRight"),
+    browDown: avg("browDownLeft", "browDownRight"),
+    browUp: b.browInnerUp || 0,
+    sneer: avg("noseSneerLeft", "noseSneerRight"),
+    press: avg("mouthPressLeft", "mouthPressRight"),
+    eyeWide: avg("eyeWideLeft", "eyeWideRight"),
+    jaw: b.jawOpen || 0,
+    motion: S.faceMotion,
+  };
+  if (!feedCal("face", f)) return;
+  const d = {}; for (const k in f) d[k] = f[k] - cal.face.base[k];
+  const v = 1.6 * d.smile + 0.6 * d.cheek - 1.4 * d.frown - 1.0 * d.browDown - 0.8 * d.sneer - 0.6 * d.press;
+  const a = 1.2 * d.eyeWide + 0.8 * d.jaw + 0.8 * d.browUp + 0.4 * d.smile + 1.5 * d.motion;
+  S.mod.face.v = ema(S.mod.face.v, tanh(v * 1.8), dt, 0.25);
+  S.mod.face.a = ema(S.mod.face.a, tanh(a * 1.8), dt, 0.25);
+}
+
+/* ---------- body: posture, openness, movement ---------- */
+const BODY_PTS = [0, 11, 12, 13, 14, 15, 16];
+function handlePose(res, dt, t) {
+  const lm = res.landmarks?.[0];
+  const mask = res.segmentationMasks?.[0];
+  if (mask) { buildMask(mask); S.lastMaskT = t; }
+  if (!lm) { S.poseLm = null; return; }
+  S.poseLm = lm;
+  const vis = (lm[11].visibility + lm[12].visibility) / 2;
+  if (vis < 0.5) return;
+  S.lastPoseT = t;
+  const sw = Math.max(dist(lm[11], lm[12]), 1e-3);
+  if (S.prevPose) {
+    let m = 0; for (const i of BODY_PTS) m += dist(lm[i], S.prevPose[i]);
+    S.bodyMotion = ema(S.bodyMotion, m / BODY_PTS.length / sw / Math.max(dt, 1e-3), dt, 0.5);
+  }
+  S.prevPose = lm.map(p => ({ x: p.x, y: p.y }));
+  const wristsSeen = lm[15].visibility > 0.5 && lm[16].visibility > 0.5;
+  const midX = (lm[11].x + lm[12].x) / 2, shY = (lm[11].y + lm[12].y) / 2;
+  const crossed = wristsSeen && Math.abs(lm[15].x - midX) < 0.35 * sw && Math.abs(lm[16].x - midX) < 0.35 * sw && lm[15].y > shY && lm[16].y > shY ? 1 : 0;
+  const f = {
+    upright: (shY - (lm[7].y + lm[8].y) / 2) / sw,
+    open: wristsSeen ? dist(lm[15], lm[16]) / sw : null,
+    motion: S.bodyMotion,
+  };
+  if (f.open === null) f.open = cal.body.base ? cal.body.base.open : 1;
+  if (!feedCal("body", f)) return;
+  const d = {}; for (const k in f) d[k] = f[k] - cal.body.base[k];
+  const v = 0.9 * tanh(d.upright * 2.5) + 0.35 * tanh(d.open) - 0.5 * crossed;
+  const a = tanh(d.motion * 1.2) + 0.2 * tanh(d.open);
+  S.mod.body.v = ema(S.mod.body.v, clamp(v), dt, 0.4);
+  S.mod.body.a = ema(S.mod.body.a, clamp(a), dt, 0.4);
+}
+
+function buildMask(mask) {
+  const w = mask.width, h = mask.height, arr = mask.getAsFloat32Array();
+  const step = Math.max(1, Math.round(w / 160));
+  const mw = Math.floor(w / step), mh = Math.floor(h / step);
+  if (maskCv.width !== mw || maskCv.height !== mh) { maskCv.width = mw; maskCv.height = mh; }
+  const img = maskCtx.createImageData(mw, mh), px = img.data;
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    const i = (y * mw + x) * 4;
+    px[i] = px[i + 1] = px[i + 2] = 255;
+    px[i + 3] = arr[(y * step) * w + x * step] * 255;
+  }
+  maskCtx.putImageData(img, 0, 0);
+}
+
+/* ---------- voice: energy + pitch from the mic ---------- */
+function setupAudio(stream) {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(stream);
+  const an = ac.createAnalyser(); an.fftSize = 2048;
+  src.connect(an);
+  S.audio = { ac, an, buf: new Float32Array(2048), hist: [], nf: -50, acc: 0 };
+}
+function pitchOf(buf, sr) {
+  const minLag = Math.floor(sr / 400), maxLag = Math.min(Math.floor(sr / 70), buf.length >> 1);
+  let energy = 0; for (let i = 0; i < buf.length; i += 2) energy += buf[i] * buf[i];
+  let best = 0, bestLag = 0;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let s = 0; for (let i = 0; i < buf.length - lag; i += 2) s += buf[i] * buf[i + lag];
+    if (s > best) { best = s; bestLag = lag; }
+  }
+  return bestLag && best / (energy + 1e-9) > 0.35 ? sr / bestLag : 0;
+}
+function audioTick(dt) {
+  const A = S.audio; if (!A) return;
+  A.acc += dt; if (A.acc < 0.05) return; const step = A.acc; A.acc = 0;
+  const on = S.micOn && S.aStream?.getAudioTracks()[0]?.enabled;
+  let speaking = false, pitch = 0, db = -100;
+  if (on) {
+    A.an.getFloatTimeDomainData(A.buf);
+    let r = 0; for (let i = 0; i < A.buf.length; i++) r += A.buf[i] * A.buf[i];
+    db = 20 * Math.log10(Math.sqrt(r / A.buf.length) + 1e-8);
+    A.nf += db < A.nf ? (db - A.nf) * 0.5 : (db - A.nf) * 0.004;
+    speaking = db > A.nf + 12 && db > -62;
+    if (speaking) pitch = pitchOf(A.buf, A.ac.sampleRate);
+  }
+  A.hist.push({ speaking, pitch, db }); if (A.hist.length > 40) A.hist.shift();
+  const sp = A.hist.filter(h => h.speaking), ps = sp.filter(h => h.pitch > 0).map(h => 12 * Math.log2(h.pitch / 100));
+  const frac = sp.length / A.hist.length;
+  if (frac < 0.15 || ps.length < 5) { S.mod.voice.c = ema(S.mod.voice.c, 0, step, 0.5); return; }
+  const pm = ps.reduce((a, b) => a + b, 0) / ps.length;
+  const psd = Math.sqrt(ps.reduce((a, b) => a + (b - pm) ** 2, 0) / ps.length);
+  const f = { pm, psd, db: sp.reduce((a, b) => a + b.db, 0) / sp.length };
+  if (!feedCal("voice", f)) return;
+  const d = { pm: f.pm - cal.voice.base.pm, psd: f.psd - cal.voice.base.psd, db: f.db - cal.voice.base.db };
+  const v = 0.6 * tanh(d.psd / 1.5) + 0.4 * tanh(d.pm / 3);
+  const a = 0.6 * tanh(d.db / 6) + 0.4 * tanh(d.pm / 3);
+  S.mod.voice.v = ema(S.mod.voice.v, v, step, 0.5);
+  S.mod.voice.a = ema(S.mod.voice.a, a, step, 0.5);
+  S.mod.voice.c = ema(S.mod.voice.c, Math.min(1, frac * 1.5), step, 0.5);
+}
+
+/* ---------- fusion ---------- */
+const W = { face: 0.5, body: 0.25, voice: 0.25 };
+function fuse(dt, t) {
+  S.mod.face.c = ema(S.mod.face.c, cal.face.base && t - S.lastFaceT < 300 ? 1 : 0, dt, 0.3);
+  S.mod.body.c = ema(S.mod.body.c, cal.body.base && t - S.lastPoseT < 400 ? 1 : 0, dt, 0.3);
+  let tw = 0, v = 0, a = 0;
+  for (const k in W) { const m = S.mod[k], w = W[k] * m.c; tw += w; v += w * m.v; a += w * m.a; }
+  const tv = tw > 0.05 ? v / tw : 0, ta = tw > 0.05 ? a / tw : 0;
+  S.fused.v = ema(S.fused.v, tv, dt, 0.6);
+  S.fused.a = ema(S.fused.a, ta, dt, 0.6);
+  S.maskAlpha = ema(S.maskAlpha, t - S.lastMaskT < 500 && S.poseLm ? 1 : 0, dt, 0.25);
+}
+
+/* ---------- aura color + naming ---------- */
+const C = { posHi: [255, 196, 64], posLo: [64, 220, 180], negLo: [110, 90, 255], negHi: [255, 70, 80], mid: [205, 208, 222] };
+const mix = (p, q, t) => p.map((x, i) => lerp(x, q[i], t));
+function auraColor(v, a) {
+  const u = (v + 1) / 2, w = (a + 1) / 2;
+  const col = mix(mix(C.negLo, C.posLo, u), mix(C.negHi, C.posHi, u), w);
+  const mag = Math.min(1, Math.hypot(v, a) * 1.6);
+  return mix(C.mid, col, mag).map(Math.round);
+}
+function auraName(v, a) {
+  const mag = Math.hypot(v, a);
+  if (mag < 0.15) return ["Netral", "Kalem, belum ada sinyal yang menonjol."];
+  if (v >= 0 && a >= 0) return ["Cerah", "Energik dan positif."];
+  if (v >= 0) return ["Adem", "Santai, positif, tenang."];
+  if (a < 0) return ["Mendung", "Lesu atau agak turun."];
+  return ["Panas", "Tegang, gelisah, atau lagi kesel."];
+}
+
+/* ---------- render ---------- */
+let dpr = 1;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  stage.width = Math.round(stage.clientWidth * dpr);
+  stage.height = Math.round(stage.clientHeight * dpr);
+}
+window.addEventListener("resize", resize);
+
+function render(t) {
+  const Wc = stage.width, Hc = stage.height, vw = video.videoWidth, vh = video.videoHeight;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0A0A0F"; ctx.fillRect(0, 0, Wc, Hc);
+  if (!vw) return;
+  const s = Math.max(Wc / vw, Hc / vh), rw = vw * s, rh = vh * s, rx = (Wc - rw) / 2, ry = (Hc - rh) / 2;
+  const [r, g, b] = auraColor(S.fused.v, S.fused.a);
+  const col = `rgb(${r},${g},${b})`;
+  const ar01 = (S.fused.a + 1) / 2;
+  const pulse = 1 + 0.12 * ar01 * Math.sin(t / 1000 * (1.5 + 4 * ar01) * Math.PI);
+
+  if (S.facing === "user") { ctx.translate(Wc, 0); ctx.scale(-1, 1); }
+  ctx.filter = "brightness(0.5) saturate(0.6)";
+  ctx.drawImage(video, rx, ry, rw, rh);
+  ctx.filter = "none";
+
+  if (S.maskAlpha > 0.02 && maskCv.width) {
+    maskCtx.globalCompositeOperation = "source-in";
+    maskCtx.fillStyle = col; maskCtx.fillRect(0, 0, maskCv.width, maskCv.height);
+    maskCtx.globalCompositeOperation = "source-over";
+    ctx.globalCompositeOperation = "screen";
+    const cx = rx + rw / 2, cy = ry + rh / 2;
+    for (const [blur, scale, alpha] of [[70, 1.14, 0.9], [34, 1.06, 0.85], [14, 1.02, 0.6]]) {
+      const sc = scale * pulse * 0.97 + 0.03;
+      ctx.globalAlpha = alpha * S.maskAlpha;
+      ctx.filter = `blur(${blur * dpr * (Wc / 1200 + 0.5)}px)`;
+      ctx.drawImage(maskCv, cx - rw * sc / 2, cy - rh * sc / 2, rw * sc, rh * sc);
+    }
+    ctx.filter = "none"; ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    if (personCv.width !== vw || personCv.height !== vh) { personCv.width = vw; personCv.height = vh; }
+    personCtx.globalCompositeOperation = "source-over";
+    personCtx.clearRect(0, 0, vw, vh);
+    personCtx.drawImage(video, 0, 0, vw, vh);
+    personCtx.globalCompositeOperation = "destination-in";
+    personCtx.drawImage(maskCv, 0, 0, vw, vh);
+    ctx.globalAlpha = S.maskAlpha;
+    ctx.drawImage(personCv, rx, ry, rw, rh);
+    ctx.globalAlpha = 1;
+  }
+
+  if (S.debug) {
+    ctx.fillStyle = col;
+    const dotAt = p => { ctx.beginPath(); ctx.arc(rx + p.x * rw, ry + p.y * rh, 3 * dpr, 0, 7); ctx.fill(); };
+    if (S.poseLm) for (let i = 0; i < 25; i++) if (S.poseLm[i].visibility > 0.5) dotAt(S.poseLm[i]);
+    if (S.faceLm) for (let i = 0; i < S.faceLm.length; i += 9) dotAt(S.faceLm[i]);
+  }
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const vg = ctx.createRadialGradient(Wc / 2, Hc / 2, Math.min(Wc, Hc) * 0.35, Wc / 2, Hc / 2, Math.max(Wc, Hc) * 0.75);
+  vg.addColorStop(0, `rgba(${r},${g},${b},0)`);
+  vg.addColorStop(1, `rgba(${r},${g},${b},0.22)`);
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, Wc, Hc);
+  document.documentElement.style.setProperty("--aura", col);
+}
+
+/* ---------- HUD ---------- */
+const circ = $("circ"), cctx = circ.getContext("2d");
+function drawCirc(col) {
+  const n = circ.width, h = n / 2;
+  cctx.clearRect(0, 0, n, n);
+  cctx.strokeStyle = "rgba(255,255,255,.14)"; cctx.lineWidth = 2;
+  cctx.beginPath(); cctx.arc(h, h, h - 6, 0, 7); cctx.stroke();
+  cctx.beginPath(); cctx.moveTo(h, 8); cctx.lineTo(h, n - 8); cctx.moveTo(8, h); cctx.lineTo(n - 8, h); cctx.stroke();
+  cctx.fillStyle = "rgba(169,167,184,.9)"; cctx.font = "500 18px JetBrains Mono, monospace";
+  cctx.textAlign = "center";
+  cctx.fillText("energik", h, 30); cctx.fillText("kalem", h, n - 16);
+  cctx.textAlign = "left"; cctx.fillText("+", n - 26, h - 8);
+  cctx.textAlign = "right"; cctx.fillText("−", 26, h - 8);
+  S.trail.forEach((p, i) => {
+    cctx.fillStyle = `rgba(255,255,255,${(i / S.trail.length) * 0.35})`;
+    cctx.beginPath(); cctx.arc(h + p.v * (h - 14), h - p.a * (h - 14), 3, 0, 7); cctx.fill();
+  });
+  const x = h + S.fused.v * (h - 14), y = h - S.fused.a * (h - 14);
+  cctx.fillStyle = col; cctx.beginPath(); cctx.arc(x, y, 10, 0, 7); cctx.fill();
+  cctx.strokeStyle = "#fff"; cctx.lineWidth = 3; cctx.stroke();
+}
+function setBar(id, v) {
+  const el = $(id), w = Math.abs(v) * 50;
+  el.style.width = w + "%";
+  el.style.left = v >= 0 ? "50%" : (50 - w) + "%";
+}
+function modStatus(k) {
+  const c = cal[k], m = S.mod[k];
+  if (k === "voice" && !S.micOn) return "mic off";
+  if (!c.base) return c.n ? `kalibrasi ${Math.round(c.n / NEED[k] * 100)}%` : (k === "voice" ? "coba ngomong" : "nunggu");
+  if (m.c < 0.2) return k === "voice" ? "lagi diem" : "nggak keliatan";
+  return `yakin ${Math.round(m.c * 100)}%`;
+}
+let hudT = 0;
+function hud(t) {
+  if (t - hudT < 100) return; hudT = t;
+  S.trail.push({ v: S.fused.v, a: S.fused.a }); if (S.trail.length > 24) S.trail.shift();
+  const [r, g, b] = auraColor(S.fused.v, S.fused.a);
+  drawCirc(`rgb(${r},${g},${b})`);
+  const calibrating = !cal.face.base && !cal.body.base;
+  const [name, desc] = auraName(S.fused.v, S.fused.a);
+  $("auraName").textContent = calibrating ? "Netral" : name;
+  $("auraDesc").textContent = calibrating ? "Lagi kalibrasi, pasang muka biasa aja." : `${desc} Intensitas ${Math.round(Math.min(1, Math.hypot(S.fused.v, S.fused.a)) * 100)}%.`;
+  for (const [k, id, st] of [["face", "bFace", "sFace"], ["body", "bBody", "sBody"], ["voice", "bVoice", "sVoice"]]) {
+    setBar(id, S.mod[k].c > 0.2 ? S.mod[k].v : 0);
+    $(st).textContent = modStatus(k);
+  }
+}
+
+/* ---------- main loop ---------- */
+let lastVT = -1, lastNow = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.1, Math.max(0.001, (now - (lastNow || now)) / 1000)); lastNow = now;
+  if (S.models && video.readyState >= 2 && video.currentTime !== lastVT) {
+    lastVT = video.currentTime; S.frame++; S.fpsCount++;
+    const ts = performance.now();
+    try { handleFace(S.models.face.detectForVideo(video, ts), dt, now); } catch (e) { console.warn(e); }
+    if (S.frame % 2 === 0) {
+      try { S.models.pose.detectForVideo(video, ts, res => handlePose(res, dt * 2, now)); } catch (e) { console.warn(e); }
+    }
+  }
+  if (now - S.fpsT > 1000) { $("fps").textContent = `${S.fpsCount} fps`; S.fpsCount = 0; S.fpsT = now; }
+  audioTick(dt);
+  fuse(dt, now);
+  render(now);
+  hud(now);
+}
+
+/* ---------- setup ---------- */
+async function makeModels(delegate) {
+  const fs = await FilesetResolver.forVisionTasks(WASM);
+  const face = await FaceLandmarker.createFromOptions(fs, {
+    baseOptions: { modelAssetPath: M_FACE, delegate }, runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
+  });
+  const pose = await PoseLandmarker.createFromOptions(fs, {
+    baseOptions: { modelAssetPath: M_POSE, delegate }, runningMode: "VIDEO", numPoses: 1, outputSegmentationMasks: true,
+  });
+  return { face, pose };
+}
+async function startVideo() {
+  S.vStream?.getTracks().forEach(t => t.stop());
+  S.vStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+  video.srcObject = S.vStream;
+  await video.play();
+  S.prevPose = null; S.prevNose = null;
+}
+function setStatus(msg, err) { const el = $("status"); el.textContent = msg; el.classList.toggle("err", !!err); }
+
+$("btnStart").addEventListener("click", async () => {
+  const btn = $("btnStart"); btn.disabled = true;
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    setStatus("Kamera butuh https atau localhost. Buka file ini lewat server, bukan langsung dari folder.", true);
+    btn.disabled = false; return;
+  }
+  try {
+    setStatus("Minta izin kamera...");
+    await startVideo();
+    try {
+      setStatus("Minta izin mic...");
+      S.aStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: false } });
+      setupAudio(S.aStream);
+    } catch { S.micOn = false; $("btnMic").textContent = "Mic off"; $("btnMic").setAttribute("aria-pressed", "false"); }
+    setStatus("Download model AI (sekitar 10 MB, sekali aja)...");
+    try { S.models = await makeModels("GPU"); }
+    catch (e) { console.warn("GPU gagal, pakai CPU", e); S.models = await makeModels("CPU"); }
+    try { await navigator.wakeLock?.request("screen"); } catch {}
+    resetCal();
+    $("start").hidden = true;
+    resize();
+  } catch (e) {
+    console.error(e);
+    setStatus(e.name === "NotAllowedError" ? "Izin kamera ditolak. Aktifin di setting browser terus coba lagi." : `Gagal mulai: ${e.message}`, true);
+    btn.disabled = false;
+  }
+});
+$("btnFlip").addEventListener("click", async () => {
+  S.facing = S.facing === "user" ? "environment" : "user";
+  try { await startVideo(); resetCal(); } catch (e) { S.facing = S.facing === "user" ? "environment" : "user"; }
+});
+$("btnMic").addEventListener("click", () => {
+  if (!S.aStream) return;
+  S.micOn = !S.micOn;
+  S.aStream.getAudioTracks().forEach(t => (t.enabled = S.micOn));
+  if (S.micOn) S.audio?.ac.resume();
+  $("btnMic").textContent = S.micOn ? "Mic on" : "Mic off";
+  $("btnMic").setAttribute("aria-pressed", String(S.micOn));
+});
+$("btnDbg").addEventListener("click", () => {
+  S.debug = !S.debug; $("btnDbg").setAttribute("aria-pressed", String(S.debug));
+});
+$("btnCal").addEventListener("click", () => { resetCal(); S.fused.v = S.fused.a = 0; for (const k in S.mod) S.mod[k].v = S.mod[k].a = 0; });
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
